@@ -133,14 +133,18 @@ app.post("/webhook", async (req, res) => {
       `Your invoice details for ${session.child}:\n\nAmount: ₦${formattedTotalAmount}\nAccount Number: 1234567890\nService Charge: ₦100`
     );
 
-    // Prompt user to confirm payment
-    await sendText(from, "Please type 'paid' when you have completed the payment.");
-    session.amountSent = true; // Set a flag to prevent re-sending this message
+    // Prompt user to confirm payment with a button
+    await sendInteractiveButtons(
+      from,
+      "Please click the button below after you have completed the payment.",
+      [{ id: "paid_button", title: "I have paid" }]
+    );
+    session.awaitingPaidConfirmation = true; // Set a flag to wait for the button click
     return res.sendStatus(200);
   }
 
-  // Step 4: Confirm payment
-  if (userInput && userInput.toLowerCase() === "paid") {
+  // Step 4: Confirm payment via button click
+  if (userInput && userInput === "I have paid") {
     await sendText(
       from,
       "Thank you! We have received your payment. Your school has been notified and will issue a receipt for you."
