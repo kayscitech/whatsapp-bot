@@ -6,7 +6,7 @@ const app = express();
 app.use(bodyParser.json());
 
 const VERIFY_TOKEN = "my_secret_token";
-const WHATSAPP_TOKEN = "EAAJ6yySAPogBPdddPdZCiYS0uxFYqQ0qQ4szgF6a9c1Dap6PnXXT2VZCpo9aCXdSR0KDiaG0OxvhZBzn9maC9vB606Wers2VOMXkB3wKNe1ORcVcmIYWFeYlHuwgr9O29vCMU0Y0eev0yX3kEF0I1M848pIq4qumZAqPgsJaTwowBoiMmUd6VEsslrNpZCAPIXIZATCb0ZCk9aGdx70yBcxLx3ZB0oUZBZAnv2mFmjqEOk3PBCNwZDZD";
+const WHATSAPP_TOKEN = "EAAJ6yySAPogBPUjO2zUulgL1PIkL79Wg2MdXDzcxhgxJn42dQZBmgOZCGkksfkp7oEt2Vq3ZAp7Ki1aHCfE3YUgCWIkLjVwxmuFYaR7PmQ2pgZA9db8qjLdfZCxK7dp0oDsViYHSvVqrrBZA9rlBfo5QcXZAQh5cWKLQ9eKM0c6yeoxvqV8skywpJ8uwdqNu82rKtfZBbs7yNlifIHOfZADEblqW7ekAT19639duqrke1JUYUTAZDZD";
 const PHONE_NUMBER_ID = "816500804874123";
 
 const sessions = {}; // Store user sessions in memory
@@ -233,3 +233,4 @@ async function sendInteractiveButtons(to, bodyText, buttons) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
