@@ -1,4 +1,3 @@
-// index.js
 const express = require("express");
 const axios = require("axios");
 const bodyParser = require("body-parser");
@@ -39,10 +38,17 @@ app.post("/webhook", async (req, res) => {
 
   const message = messages[0];
   const from = message.from; // WhatsApp user number
-  const userInput = message.text ? message.text.body : message.button ? message.button.text : null;
-  if (!userInput) return res.sendStatus(200);
 
-  // Initialize session
+  let userInput = null;
+  if (message.type === "text") {
+    userInput = message.text.body;
+  } else if (message.type === "interactive" && message.interactive.button_reply) {
+    userInput = message.interactive.button_reply.title;
+  } else {
+    return res.sendStatus(200);
+  }
+
+  // Initialize session or handle first-time users
   if (!sessions[from]) {
     sessions[from] = {};
     await sendInteractiveButtons(
@@ -65,7 +71,7 @@ app.post("/webhook", async (req, res) => {
     // Ask for payment amount (3 options)
     await sendInteractiveButtons(
       from,
-      "How much would you like to pay?",
+      `How much would you like to pay for ${session.child}?`,
       [
         { id: "5000", title: "₦5,000" },
         { id: "10000", title: "₦10,000" },
