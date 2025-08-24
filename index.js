@@ -5,7 +5,7 @@ const bodyParser = require("body-parser");
 const app = express();
 app.use(bodyParser.json());
 
-const VERIFY_TOKEN = "my_secret_token"; // Must match your WhatsApp webhook verify token
+const VERIFY_TOKEN = "my_secret_token";
 const WHATSAPP_TOKEN = "EAAJ6yySAPogBPdddPdZCiYS0uxFYqQ0qQ4szgF6a9c1Dap6PnXXT2VZCpo9aCXdSR0KDiaG0OxvhZBzn9maC9vB606Wers2VOMXkB3wKNe1ORcVcmIYWFeYlHuwgr9O29vCMU0Y0eev0yX3kEF0I1M848pIq4qumZAqPgsJaTwowBoiMmUd6VEsslrNpZCAPIXIZATCb0ZCk9aGdx70yBcxLx3ZB0oUZBZAnv2mFmjqEOk3PBCNwZDZD";
 const PHONE_NUMBER_ID = "816500804874123";
 
@@ -53,103 +53,129 @@ app.post("/webhook", async (req, res) => {
     userInput = message.interactive.button_reply.title;
     buttonId = message.interactive.button_reply.id;
   } else {
-    // If it's a different message type, just acknowledge it.
+    // Acknowledge other message types (like status updates)
+    console.log("Received unhandled message type:", message.type);
     return res.sendStatus(200);
   }
 
-  // Handle the start of the conversation. If a session doesn't exist, create one.
+  // Initialize or get the user's session
   if (!sessions[from]) {
-    sessions[from] = {};
+    sessions[from] = { state: 'initial' };
   }
-
   const session = sessions[from];
 
-  // Step 4: Check for the "I have paid" button click FIRST
-  if (buttonId === "paid_button") {
-    await sendText(
-      from,
-      "Thank you! We have received your payment. Your school has been notified and will issue a receipt for you."
-    );
-    delete sessions[from]; // Reset session
-    return res.sendStatus(200);
-  }
+  console.log(`User: ${from}, Input: "${userInput}", Button ID: "${buttonId}", Current State: "${session.state}"`);
 
-  // Step 3 (Continued): Handle custom amount input
-  if (session.awaitingCustomAmount) {
-    const customAmount = parseInt(userInput.replace(/₦|,/g, ""));
-    if (!isNaN(customAmount) && customAmount > 0) {
-      session.amount = customAmount;
-      session.awaitingCustomAmount = false;
-      // Continue to the next step to send invoice details
-    } else {
-      await sendText(from, "That doesn't look like a valid amount. Please type a number in Naira.");
-      return res.sendStatus(200);
+  // State Machine Logic
+  try {
+    switch (session.state) {
+      case 'initial':
+        await sendInteractiveButtons(
+          from,
+          "Welcome to our payment system. Click the button below to get started.",
+          [{ id: "start_payment", title: "Click Here to Pay" }]
+        );
+        session.state = 'awaiting_start_button';
+        break;
+
+      case 'awaiting_start_button':
+        if (buttonId === 'start_payment') {
+          await sendInteractiveButtons(
+            from,
+            "Who would you like to pay for?",
+            [
+              { id: "child_1", title: "Tosin Akinpelu" },
+              { id: "child_2", title: "Dapo Akinpelu" }
+            ]
+          );
+          session.state = 'awaiting_child_selection';
+        } else {
+          // If the user sends something else, just resend the initial message
+          await sendText(from, "Please click the 'Click Here to Pay' button to begin.");
+        }
+        break;
+
+      case 'awaiting_child_selection':
+        if (buttonId === 'child_1' || buttonId === 'child_2') {
+          session.child = userInput;
+          await sendInteractiveButtons(
+            from,
+            `How much would you like to pay for ${session.child}?`,
+            [
+              { id: "5000", title: "₦5,000" },
+              { id: "10000", title: "₦10,000" },
+              { id: "custom_amount", title: "Type custom amount" }
+            ]
+          );
+          session.state = 'awaiting_amount_selection';
+        } else {
+          await sendText(from, "Please select one of the children from the list.");
+        }
+        break;
+
+      case 'awaiting_amount_selection':
+        if (buttonId === 'custom_amount') {
+          await sendText(from, "Please type the amount you would like to pay in Naira.");
+          session.state = 'awaiting_custom_amount';
+        } else {
+          const parsedAmount = parseInt(userInput.replace(/₦|,/g, ""));
+          if (!isNaN(parsedAmount) && parsedAmount > 0) {
+            session.amount = parsedAmount;
+            session.state = 'awaiting_paid_confirmation';
+            // Fall through to the next case to send the invoice and paid button
+          } else {
+            await sendText(from, "That doesn't look like a valid amount. Please try again.");
+            // Keep the user in the current state to allow them to re-select
+            return res.sendStatus(200);
+          }
+        }
+        break;
+      
+      case 'awaiting_custom_amount':
+        const customAmount = parseInt(userInput.replace(/₦|,/g, ""));
+        if (!isNaN(customAmount) && customAmount > 0) {
+          session.amount = customAmount;
+          session.state = 'awaiting_paid_confirmation';
+          // Fall through to the next case to send the invoice and paid button
+        } else {
+          await sendText(from, "That doesn't look like a valid amount. Please type a number in Naira.");
+          return res.sendStatus(200);
+        }
+        break;
+
+      case 'awaiting_paid_confirmation':
+        // This case is only for sending the invoice details and the 'I have paid' button
+        // and is triggered by a previous state change.
+        if (buttonId === 'paid_button') {
+          await sendText(
+            from,
+            "Thank you! We have received your payment. Your school has been notified and will issue a receipt for you."
+          );
+          delete sessions[from]; // Reset session
+        } else {
+          const totalAmount = session.amount + 100;
+          const formattedTotalAmount = formatNumber(totalAmount);
+          await sendText(
+            from,
+            `Your invoice details for ${session.child}:\n\nAmount: ₦${formattedTotalAmount}\nAccount Number: 1234567890\nService Charge: ₦100`
+          );
+          await sendInteractiveButtons(
+            from,
+            "Please click the button below after you have completed the payment.",
+            [{ id: "paid_button", title: "I have paid" }]
+          );
+        }
+        break;
+
+      default:
+        // Handles any unexpected state by resetting to initial
+        await sendText(from, "I'm sorry, an error occurred. Let's start over.");
+        delete sessions[from];
+        break;
     }
-  }
-
-  // Step 3: Amount selected (from button or custom input)
-  if (session.child && !session.amount) {
-    if (buttonId === "custom_amount") {
-      session.awaitingCustomAmount = true;
-      await sendText(from, "Please type the amount you would like to pay in Naira.");
-    } else {
-      const parsedAmount = parseInt(userInput.replace(/₦|,/g, ""));
-      if (!isNaN(parsedAmount) && parsedAmount > 0) {
-        session.amount = parsedAmount;
-      } else {
-        await sendText(from, "That doesn't look like a valid amount. Please select an option or type a number.");
-      }
-    }
-    return res.sendStatus(200);
-  }
-
-  // Step 2: Child selected
-  if (userInput === "Tosin Akinpelu" || userInput === "Dapo Akinpelu") {
-    session.child = userInput;
-    await sendInteractiveButtons(
-      from,
-      `How much would you like to pay for ${session.child}?`,
-      [
-        { id: "5000", title: "₦5,000" },
-        { id: "10000", title: "₦10,000" },
-        { id: "custom_amount", title: "Type custom amount" }
-      ]
-    );
-    return res.sendStatus(200);
-  }
-
-  // Final step before payment: Send invoice details and the 'I have paid' button
-  // This block only runs after an amount is successfully set and we are not awaiting a custom amount.
-  if (session.amount && !session.awaitingCustomAmount && !session.awaitingPaidConfirmation) {
-    const totalAmount = session.amount + 100;
-    const formattedTotalAmount = formatNumber(totalAmount);
-
-    await sendText(
-      from,
-      `Your invoice details for ${session.child}:\n\nAmount: ₦${formattedTotalAmount}\nAccount Number: 1234567890\nService Charge: ₦100`
-    );
-
-    await sendInteractiveButtons(
-      from,
-      "Please click the button below after you have completed the payment.",
-      [{ id: "paid_button", title: "I have paid" }]
-    );
-    session.awaitingPaidConfirmation = true; // Set flag to prevent re-sending
-    return res.sendStatus(200);
-  }
-
-  // Step 1: Initial message or a fallback
-  if (userInput === "Click Here to Pay" || !session.start) {
-    session.start = true;
-    await sendInteractiveButtons(
-      from,
-      "Who would you like to pay for?",
-      [
-        { id: "child_1", title: "Tosin Akinpelu" },
-        { id: "child_2", title: "Dapo Akinpelu" }
-      ]
-    );
-    return res.sendStatus(200);
+  } catch (error) {
+    console.error("Failed to process message:", error.response?.data || error.message);
+    await sendText(from, "I'm sorry, an error occurred. Please try again later.");
   }
 
   res.sendStatus(200);
@@ -174,7 +200,7 @@ async function sendText(to, text) {
       }
     );
   } catch (error) {
-    console.error("Error sending text message:", error.response ? error.response.data : error.message);
+    console.error("Error sending text message:", error.response?.data || error.message);
   }
 }
 
@@ -201,7 +227,7 @@ async function sendInteractiveButtons(to, bodyText, buttons) {
       }
     );
   } catch (error) {
-    console.error("Error sending interactive buttons:", error.response ? error.response.data : error.message);
+    console.error("Error sending interactive buttons:", error.response?.data || error.message);
   }
 }
 
