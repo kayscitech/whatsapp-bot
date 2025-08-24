@@ -1,4 +1,3 @@
-// index.js
 const express = require("express");
 const axios = require("axios");
 const bodyParser = require("body-parser");
@@ -6,151 +5,112 @@ const bodyParser = require("body-parser");
 const app = express();
 app.use(bodyParser.json());
 
-const VERIFY_TOKEN = "my_secret_token"; // Must match your WhatsApp webhook verify token
-const WHATSAPP_TOKEN = "EAAJ6yySAPogBPfxDEUrZBBByiTSfitLXSqyAOgsmDEK8UDkmfwi0iQ59rhSDY2QSTZCGzkvmdZBZCF3AiZCQ0CnjGUCUEIP18QQfUGaBCAEGFwfaTqgfnYDovyovds6w7XcP8pSwbBuqe5RBOUrN8mIsAMyd5wdj72nIfQ5vUgwWrxg3FQ7y6k5EIJORHIXFqeZAeRLz9RzygwD6ul3hTNBhOZBQkLTYvtQj3ZA5ZAOfPZB87WXgZDZD";
+const PORT = process.env.PORT || 3000;
+
+const TOKEN = "EAAJ6yySAPogBPSZCefCjIZBUxEkvge72n6M9lfyjLfqyYZC68xmQsq1D7Kh8vpOjEnZCKABXyQOtLzgrsP26I6pZARwd16EEijYu9yTnRMN1cd0ZAdG6ZCBz1k8yEYVyt7yNIXsZBZA4dzSzZASCDlr7PZBASUqEov89QZBGq0A4eZANZAKZC2bbQJkIZCRvN04lSV0pAeUJKo9agcfFQwBQRs46KvYOMyl4MWCZAgT4UIdHhmGpQFcn9pZAoZD";
+
 const PHONE_NUMBER_ID = "816500804874123";
 
-const sessions = {}; // Store user sessions in memory
+// In-memory session storage
+const sessions = {};
 
-// Verify webhook
+function sendText(to, message) {
+  return axios.post(`https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`, {
+    messaging_product: "whatsapp",
+    to,
+    type: "text",
+    text: { body: message }
+  }, {
+    headers: { Authorization: `Bearer ${TOKEN}` }
+  });
+}
+
+function sendInteractiveButtons(to, text, buttons) {
+  return axios.post(`https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`, {
+    messaging_product: "whatsapp",
+    to,
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text },
+      action: { buttons: buttons.map((b, i) => ({ type: "reply", reply: { id: `btn_${i}`, title: b } })) }
+    }
+  }, {
+    headers: { Authorization: `Bearer ${TOKEN}` }
+  });
+}
+
 app.get("/webhook", (req, res) => {
+  const VERIFY_TOKEN = "my_secret_token";
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode && token === VERIFY_TOKEN) {
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
+  if (mode && token) {
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("WEBHOOK VERIFIED");
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
   }
 });
 
-// Receive messages
 app.post("/webhook", async (req, res) => {
-  const entry = req.body.entry && req.body.entry[0];
-  if (!entry) return res.sendStatus(200);
+  try {
+    const entry = req.body.entry;
+    if (!entry) return res.sendStatus(200);
 
-  const changes = entry.changes && entry.changes[0];
-  if (!changes) return res.sendStatus(200);
+    for (const e of entry) {
+      const changes = e.changes;
+      if (!changes) continue;
 
-  const value = changes.value;
-  const messages = value.messages;
-  if (!messages) return res.sendStatus(200);
+      for (const change of changes) {
+        const value = change.value;
+        const messages = value.messages;
+        if (!messages) continue;
 
-  const message = messages[0];
-  const from = message.from; // WhatsApp user number
-  const msgBody = message.text ? message.text.body : null;
-  const buttonReply = message.button ? message.button.text : null;
+        for (const message of messages) {
+          const from = message.from;
+          const text = message.text?.body?.toLowerCase();
 
-  if (!sessions[from]) {
-    sessions[from] = {};
-    // Step 1: Ask which child
-    await sendInteractiveButtons(
-      from,
-      "Who would you like to pay for?",
-      [
-        { id: "child_1", title: "Child 1" },
-        { id: "child_2", title: "Child 2" }
-      ]
-    );
-    return res.sendStatus(200);
+          if (!sessions[from]) sessions[from] = { step: 0 };
+
+          if (sessions[from].step === 0) {
+            // Step 0: Ask for child
+            sessions[from].step = 1;
+            await sendInteractiveButtons(from, "Who would you like to pay for?", ["Dapo Ayeloju", "Mariam Ayeloju", "Ramota Ayeloju"]);
+          } else if (sessions[from].step === 1) {
+            sessions[from].child = text;
+            sessions[from].step = 2;
+            // Step 1: Ask for amount
+            await sendInteractiveButtons(from, "How much would you like to pay?", ["5000", "10000", "15000", "20000", "25000", "30000", "35000", "40000", "45000", "50000"]);
+          } else if (sessions[from].step === 2) {
+            const amount = parseInt(text.replace(/\D/g, ""), 10);
+            if (!amount) {
+              await sendText(from, "Please choose a valid amount from the buttons.");
+            } else {
+              const total = amount + 100;
+              sessions[from].amount = total;
+              sessions[from].step = 3;
+              await sendText(from, `Please pay ₦${total} into this virtual account: 1234567890. Note: This account will expire in 1 hour. Service charge ₦100 included.`);
+              await sendInteractiveButtons(from, "Copy account number", ["Copied"]);
+            }
+          } else if (sessions[from].step === 3) {
+            if (text.includes("paid")) {
+              sessions[from].step = 4;
+              await sendText(from, `Thank you! We have received your payment for ${sessions[from].child}. Your school has been notified and will issue a receipt.`);
+              sessions[from] = { step: 0 }; // Reset session
+            }
+          }
+        }
+      }
+    }
+    res.sendStatus(200);
+  } catch (err) {
+    console.error(err);
+    res.sendStatus(500);
   }
-
-  const session = sessions[from];
-
-  // Step 2: If child not selected
-  if (!session.child && buttonReply) {
-    session.child = buttonReply;
-
-    // Ask for payment amount
-    await sendInteractiveButtons(
-      from,
-      "How much would you like to pay?",
-      [
-        { id: "5000", title: "₦5,000" },
-        { id: "10000", title: "₦10,000" },
-        { id: "15000", title: "₦15,000" },
-        { id: "20000", title: "₦20,000" },
-        { id: "25000", title: "₦25,000" },
-        { id: "30000", title: "₦30,000" },
-        { id: "35000", title: "₦35,000" },
-        { id: "40000", title: "₦40,000" },
-        { id: "45000", title: "₦45,000" },
-        { id: "50000", title: "₦50,000" }
-      ]
-    );
-    return res.sendStatus(200);
-  }
-
-  // Step 3: Amount selected
-  if (!session.amount && buttonReply) {
-    session.amount = parseInt(buttonReply);
-    const totalAmount = session.amount + 100;
-
-    // Send virtual account info
-    await sendInteractiveButtons(
-      from,
-      `Please pay ₦${totalAmount} into virtual account 1234567890. This account will expire in 24h. Service charge ₦100 included.`,
-      [{ id: "copy_account", title: "Copy Account Number" }]
-    );
-    return res.sendStatus(200);
-  }
-
-  // Step 4: Confirm payment
-  if (msgBody && msgBody.toLowerCase() === "paid") {
-    await sendText(
-      from,
-      "Thank you! We have received your payment. Your school has been notified and will issue a receipt."
-    );
-    delete sessions[from]; // Reset session
-    return res.sendStatus(200);
-  }
-
-  res.sendStatus(200);
 });
 
-// Helper: Send text message
-async function sendText(to, text) {
-  await axios.post(
-    `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      text: { body: text }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json"
-      }
-    }
-  );
-}
-
-// Helper: Send interactive buttons
-async function sendInteractiveButtons(to, bodyText, buttons) {
-  await axios.post(
-    `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: "whatsapp",
-      to,
-      type: "interactive",
-      interactive: {
-        type: "button",
-        body: { text: bodyText },
-        action: { buttons: buttons.map(b => ({ type: "reply", reply: { id: b.id, title: b.title } })) }
-      }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json"
-      }
-    }
-  );
-}
-
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
