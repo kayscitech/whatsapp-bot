@@ -42,9 +42,9 @@ app.post("/webhook", async (req, res) => {
   const msgBody = message.text ? message.text.body : null;
   const buttonReply = message.button ? message.button.text : null;
 
+  // Initialize session
   if (!sessions[from]) {
     sessions[from] = {};
-    // Step 1: Ask which child
     await sendInteractiveButtons(
       from,
       "Who would you like to pay for?",
@@ -58,36 +58,30 @@ app.post("/webhook", async (req, res) => {
 
   const session = sessions[from];
 
-  // Step 2: If child not selected
+  // Step 2: Select child
   if (!session.child && buttonReply) {
     session.child = buttonReply;
 
-    // Ask for payment amount
+    // Ask for payment amount (3 options)
     await sendInteractiveButtons(
       from,
       "How much would you like to pay?",
       [
         { id: "5000", title: "₦5,000" },
         { id: "10000", title: "₦10,000" },
-        { id: "15000", title: "₦15,000" },
-        { id: "20000", title: "₦20,000" },
-        { id: "25000", title: "₦25,000" },
-        { id: "30000", title: "₦30,000" },
-        { id: "35000", title: "₦35,000" },
-        { id: "40000", title: "₦40,000" },
-        { id: "45000", title: "₦45,000" },
-        { id: "50000", title: "₦50,000" }
+        { id: "15000", title: "₦15,000" }
       ]
     );
     return res.sendStatus(200);
   }
 
   // Step 3: Amount selected
-  if (!session.amount && buttonReply) {
-    session.amount = parseInt(buttonReply);
+  if (session.child && !session.amount && buttonReply) {
+    // Clean formatting and convert to number
+    session.amount = parseInt(buttonReply.replace(/₦|,/g, ""));
     const totalAmount = session.amount + 100;
 
-    // Send virtual account info
+    // Send virtual account info with copy button
     await sendInteractiveButtons(
       from,
       `Please pay ₦${totalAmount} into virtual account 1234567890. This account will expire in 24h. Service charge ₦100 included.`,
