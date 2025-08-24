@@ -50,23 +50,19 @@ app.post("/webhook", async (req, res) => {
   } else if (message.type === "interactive" && message.interactive.button_reply) {
     userInput = message.interactive.button_reply.title;
   } else {
+    // If it's a different message type (like a status update), just acknowledge it.
     return res.sendStatus(200);
   }
 
-  const session = sessions[from] || {};
-
-  // Step 1: Initial message with "Click Here to Pay" button
-  if (!session.start && !userInput) {
-    await sendInteractiveButtons(
-      from,
-      "Welcome to our payment system. Click the button below to get started.",
-      [{ id: "start_payment", title: "Click Here to Pay" }]
-    );
-    return res.sendStatus(200);
+  // Handle the start of the conversation. If a session doesn't exist, create one.
+  if (!sessions[from]) {
+    sessions[from] = {};
   }
 
-  // Handle start button click
-  if (userInput === "Click Here to Pay" || !session.child) {
+  const session = sessions[from];
+
+  // Logic to handle "Click Here to Pay" or the initial message
+  if (userInput === "Click Here to Pay" || !session.start) {
     session.start = true;
     await sendInteractiveButtons(
       from,
@@ -76,36 +72,42 @@ app.post("/webhook", async (req, res) => {
         { id: "child_2", title: "Dapo Akinpelu" }
       ]
     );
-    sessions[from] = session;
     return res.sendStatus(200);
   }
 
   // Step 2: Select child
-  if (!session.child && (userInput === "Tosin Akinpelu" || userInput === "Dapo Akinpelu")) {
-    session.child = userInput;
-
-    await sendInteractiveButtons(
-      from,
-      `How much would you like to pay for ${session.child}?`,
-      [
-        { id: "5000", title: "₦5,000" },
-        { id: "10000", title: "₦10,000" },
-        { id: "custom_amount", title: "Type custom amount" }
-      ]
-    );
-    sessions[from] = session;
+  if (!session.child) {
+    if (userInput === "Tosin Akinpelu" || userInput === "Dapo Akinpelu") {
+      session.child = userInput;
+      await sendInteractiveButtons(
+        from,
+        `How much would you like to pay for ${session.child}?`,
+        [
+          { id: "5000", title: "₦5,000" },
+          { id: "10000", title: "₦10,000" },
+          { id: "custom_amount", title: "Type custom amount" }
+        ]
+      );
+    }
+    // If input is not a child's name and a child hasn't been selected, do nothing
     return res.sendStatus(200);
   }
 
-  // Step 3: Amount selected
+  // Step 3: Amount selected or a custom amount is being entered
   if (session.child && !session.amount) {
     if (userInput === "Type custom amount") {
       session.awaitingCustomAmount = true;
       await sendText(from, "Please type the amount you would like to pay in Naira.");
-      sessions[from] = session;
       return res.sendStatus(200);
     } else {
-      session.amount = parseInt(userInput.replace(/₦|,/g, ""));
+      const parsedAmount = parseInt(userInput.replace(/₦|,/g, ""));
+      if (!isNaN(parsedAmount) && parsedAmount > 0) {
+        session.amount = parsedAmount;
+        session.awaitingCustomAmount = false;
+      } else {
+        await sendText(from, "That doesn't look like a valid amount. Please type a number in Naira.");
+        return res.sendStatus(200);
+      }
     }
   }
 
@@ -126,22 +128,14 @@ app.post("/webhook", async (req, res) => {
     const totalAmount = session.amount + 100;
     const formattedTotalAmount = formatNumber(totalAmount);
 
-    const paymentMessage = `Please pay ₦${formattedTotalAmount} into virtual account 1234567890. This account will expire in 24h. Service charge ₦100 included.`;
-    const copyUrl = `https://your-payment-provider-link.com/pay?amount=${totalAmount}&account=1234567890`;
-
-    await sendText(from, paymentMessage);
-
-    // Send the "Click to Pay" button separately
-    await sendUrlButton(
-        from,
-        "Click the button to pay and copy the account number.",
-        "Click Here to Pay",
-        copyUrl
+    await sendText(
+      from,
+      `Your invoice details for ${session.child}:\n\nAmount: ₦${formattedTotalAmount}\nAccount Number: 1234567890\nService Charge: ₦100`
     );
 
     // Prompt user to confirm payment
     await sendText(from, "Please type 'paid' when you have completed the payment.");
-    sessions[from] = session;
+    session.amountSent = true; // Set a flag to prevent re-sending this message
     return res.sendStatus(200);
   }
 
@@ -160,74 +154,52 @@ app.post("/webhook", async (req, res) => {
 
 // Helper: Send text message
 async function sendText(to, text) {
-  await axios.post(
-    `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      text: { body: text }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json"
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        text: { body: text }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+          "Content-Type": "application/json"
+        }
       }
-    }
-  );
+    );
+  } catch (error) {
+    console.error("Error sending text message:", error.response ? error.response.data : error.message);
+  }
 }
 
 // Helper: Send interactive buttons
 async function sendInteractiveButtons(to, bodyText, buttons) {
-  await axios.post(
-    `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: "whatsapp",
-      to,
-      type: "interactive",
-      interactive: {
-        type: "button",
-        body: { text: bodyText },
-        action: { buttons: buttons.map(b => ({ type: "reply", reply: { id: b.id, title: b.title } })) }
-      }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json"
-      }
-    }
-  );
-}
-
-// Helper: Send a URL button
-async function sendUrlButton(to, bodyText, buttonText, url) {
+  try {
     await axios.post(
-        `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
-        {
-            messaging_product: "whatsapp",
-            to,
-            type: "interactive",
-            interactive: {
-                type: "cta_url",
-                body: { text: bodyText },
-                action: {
-                    name: "cta_url",
-                    url: url,
-                    buttons: [{
-                        type: "url",
-                        title: buttonText
-                    }]
-                }
-            }
-        },
-        {
-            headers: {
-                Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-                "Content-Type": "application/json"
-            }
+      `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: bodyText },
+          action: { buttons: buttons.map(b => ({ type: "reply", reply: { id: b.id, title: b.title } })) }
         }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
     );
+  } catch (error) {
+    console.error("Error sending interactive buttons:", error.response ? error.response.data : error.message);
+  }
 }
 
 const PORT = process.env.PORT || 3000;
