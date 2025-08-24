@@ -1,59 +1,71 @@
-const express = require("express");
-const bodyParser = require("body-parser");
+const express = require('express');
+const bodyParser = require('body-parser');
+
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Replace with your verify token
-const VERIFY_TOKEN = "my_secret_token";
-
-// Middleware
 app.use(bodyParser.json());
 
-// Webhook verification
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
+const VERIFY_TOKEN = 'my_secret_token';
 
-  if (mode && token) {
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK_VERIFIED");
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
+app.get('/webhook', (req, res) => {
+  // Verification handshake
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode && token === VERIFY_TOKEN) {
+    res.status(200).send(challenge);
   } else {
-    res.sendStatus(400);
+    res.sendStatus(403);
   }
 });
 
-// Webhook to receive messages
-app.post("/webhook", (req, res) => {
+app.post('/webhook', (req, res) => {
   const body = req.body;
 
-  if (body.object && body.entry) {
-    body.entry.forEach((entry) => {
+  // Make sure it's a WhatsApp message
+  if (body.object) {
+    body.entry.forEach(entry => {
       const changes = entry.changes;
-      changes.forEach((change) => {
-        if (change.value.messages) {
-          change.value.messages.forEach((message) => {
-            const from = message.from;
-            const msgBody = message.text ? message.text.body : "";
+      changes.forEach(change => {
+        const value = change.value;
+        if (value.messages) {
+          const message = value.messages[0];
+          const from = message.from; // Sender ID
+          const msgBody = message.text ? message.text.body : '';
 
-            console.log(`Message from ${from}: ${msgBody}`);
+          console.log(`Message from ${from}: ${msgBody}`);
 
-            // TODO: Here you can respond via the WhatsApp API
-          });
+          // Here you can send a reply
+          sendMessage(from, `You said: ${msgBody}`);
         }
       });
     });
+
     res.sendStatus(200);
   } else {
     res.sendStatus(404);
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+const axios = require('axios');
+const TOKEN = 'EAAJ6yySAPogBPWb6rape5udLSkF5HkdDgMzQc0t4Blp9qZBAZAcdJoPUHTZClAFfgB4ZCDcYAXTw2sXNWUpI9aZB6mov3eLnJLp1wXdhVQJVvpfA7dcCMSlMEcX5zRDNjHNjw2WbiVAUBYIHZCWb5K9GUDWZBg6uZCzKQ53EAW81nFZBnoc2ld27c6o6HzrPvKzRSyUqZAJzVMlz2UsNZBmdgaYm6A79ViQSw2Gk4GjP5uh2Ya58DMZD';
+
+function sendMessage(to, text) {
+  axios.post(`https://graph.facebook.com/v22.0/816500804874123/messages`, {
+    messaging_product: "whatsapp",
+    to: to,
+    type: "text",
+    text: { body: text }
+  }, {
+    headers: {
+      'Authorization': `Bearer ${TOKEN}`,
+      'Content-Type': 'application/json'
+    }
+  }).then(response => {
+    console.log('Message sent', response.data);
+  }).catch(err => {
+    console.error('Error sending message', err.response ? err.response.data : err);
+  });
+}
+
+app.listen(process.env.PORT || 3000, () => console.log('Server is running'));
