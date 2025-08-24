@@ -6,7 +6,7 @@ const app = express();
 app.use(bodyParser.json());
 
 // === CONFIG ===
-const TOKEN = "EAAJ6yySAPogBPSZCefCjIZBUxEkvge72n6M9lfyjLfqyYZC68xmQsq1D7Kh8vpOjEnZCKABXyQOtLzgrsP26I6pZARwd16EEijYu9yTnRMN1cd0ZAdG6ZCBz1k8yEYVyt7yNIXsZBZA4dzSzZASCDlr7PZBASUqEov89QZBGq0A4eZANZAKZC2bbQJkIZCRvN04lSV0pAeUJKo9agcfFQwBQRs46KvYOMyl4MWCZAgT4UIdHhmGpQFcn9pZAoZD";
+const TOKEN = "EAAJ6yySAPogBPZAzNDeFZCBUZBrTe2b7ZCGAxEMZAbiJ0qr78AfxDnoXZA1T3Y5SonOtrjR5Ymda5rfMwzNak375Rs386epwzP7oSjZB0NHpHiaznJ0YePQofHY76qaZAEvu7Y9SMwK9HwjQyJG5TIadELO399S3pMtij2d2RZAZBO432Lv9nsRjVvjITYUKfZBFYzRhmq3PXTZCjieBxnnVTEWL57VzEV7wgO4Bsf3nW2z4QxbQfwZDZD";
 const PHONE_NUMBER_ID = "816500804874123";
 const VERIFY_TOKEN = "my_secret_token";
 
@@ -175,3 +175,4 @@ async function sendButtonMessage(to, body, buttons) {
 // === START SERVER ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
