@@ -1,178 +1,155 @@
+// index.js
 const express = require("express");
-const bodyParser = require("body-parser");
 const axios = require("axios");
+const bodyParser = require("body-parser");
 
 const app = express();
 app.use(bodyParser.json());
 
-// === CONFIG ===
-const TOKEN = "EAAJ6yySAPogBPZAzNDeFZCBUZBrTe2b7ZCGAxEMZAbiJ0qr78AfxDnoXZA1T3Y5SonOtrjR5Ymda5rfMwzNak375Rs386epwzP7oSjZB0NHpHiaznJ0YePQofHY76qaZAEvu7Y9SMwK9HwjQyJG5TIadELO399S3pMtij2d2RZAZBO432Lv9nsRjVvjITYUKfZBFYzRhmq3PXTZCjieBxnnVTEWL57VzEV7wgO4Bsf3nW2z4QxbQfwZDZD";
+const VERIFY_TOKEN = "my_secret_token"; // Must match your WhatsApp webhook verify token
+const WHATSAPP_TOKEN = "EAAJ6yySAPogBPSZCefCjIZBUxEkvge72n6M9lfyjLfqyYZC68xmQsq1D7Kh8vpOjEnZCKABXyQOtLzgrsP26I6pZARwd16EEijYu9yTnRMN1cd0ZAdG6ZCBz1k8yEYVyt7yNIXsZBZA4dzSzZASCDlr7PZBASUqEov89QZBGq0A4eZANZAKZC2bbQJkIZCRvN04lSV0pAeUJKo9agcfFQwBQRs46KvYOMyl4MWCZAgT4UIdHhmGpQFcn9pZAoZD";
 const PHONE_NUMBER_ID = "816500804874123";
-const VERIFY_TOKEN = "my_secret_token";
 
-// === In-memory session store (simple) ===
-const sessions = {};
+const sessions = {}; // Store user sessions in memory
 
-// === VERIFY WEBHOOK ===
+// Verify webhook
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode && token) {
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK VERIFIED");
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
+  if (mode && token === VERIFY_TOKEN) {
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
   }
 });
 
-// === HANDLE INCOMING MESSAGES ===
+// Receive messages
 app.post("/webhook", async (req, res) => {
-  const data = req.body;
+  const entry = req.body.entry && req.body.entry[0];
+  if (!entry) return res.sendStatus(200);
 
-  if (data.entry) {
-    for (const entry of data.entry) {
-      for (const change of entry.changes) {
-        const value = change.value;
-        if (value.messages) {
-          for (const message of value.messages) {
-            const from = message.from; // sender phone number
-            await handleMessage(from, message);
-          }
-        }
-      }
-    }
+  const changes = entry.changes && entry.changes[0];
+  if (!changes) return res.sendStatus(200);
+
+  const value = changes.value;
+  const messages = value.messages;
+  if (!messages) return res.sendStatus(200);
+
+  const message = messages[0];
+  const from = message.from; // WhatsApp user number
+  const msgBody = message.text ? message.text.body : null;
+  const buttonReply = message.button ? message.button.text : null;
+
+  if (!sessions[from]) {
+    sessions[from] = {};
+    // Step 1: Ask which child
+    await sendInteractiveButtons(
+      from,
+      "Who would you like to pay for?",
+      [
+        { id: "child_1", title: "Child 1" },
+        { id: "child_2", title: "Child 2" }
+      ]
+    );
+    return res.sendStatus(200);
+  }
+
+  const session = sessions[from];
+
+  // Step 2: If child not selected
+  if (!session.child && buttonReply) {
+    session.child = buttonReply;
+
+    // Ask for payment amount
+    await sendInteractiveButtons(
+      from,
+      "How much would you like to pay?",
+      [
+        { id: "5000", title: "₦5,000" },
+        { id: "10000", title: "₦10,000" },
+        { id: "15000", title: "₦15,000" },
+        { id: "20000", title: "₦20,000" },
+        { id: "25000", title: "₦25,000" },
+        { id: "30000", title: "₦30,000" },
+        { id: "35000", title: "₦35,000" },
+        { id: "40000", title: "₦40,000" },
+        { id: "45000", title: "₦45,000" },
+        { id: "50000", title: "₦50,000" }
+      ]
+    );
+    return res.sendStatus(200);
+  }
+
+  // Step 3: Amount selected
+  if (!session.amount && buttonReply) {
+    session.amount = parseInt(buttonReply);
+    const totalAmount = session.amount + 100;
+
+    // Send virtual account info
+    await sendInteractiveButtons(
+      from,
+      `Please pay ₦${totalAmount} into virtual account 1234567890. This account will expire in 24h. Service charge ₦100 included.`,
+      [{ id: "copy_account", title: "Copy Account Number" }]
+    );
+    return res.sendStatus(200);
+  }
+
+  // Step 4: Confirm payment
+  if (msgBody && msgBody.toLowerCase() === "paid") {
+    await sendText(
+      from,
+      "Thank you! We have received your payment. Your school has been notified and will issue a receipt."
+    );
+    delete sessions[from]; // Reset session
+    return res.sendStatus(200);
   }
 
   res.sendStatus(200);
 });
 
-// === HANDLE USER MESSAGES / INTERACTIONS ===
-async function handleMessage(from, message) {
-  // Init session
-  if (!sessions[from]) {
-    sessions[from] = { step: "start" };
-  }
-
-  const session = sessions[from];
-  let text = message.text?.body;
-  let buttonReply = message.button?.text;
-  if (buttonReply) text = buttonReply;
-
-  switch (session.step) {
-    case "start":
-      session.step = "select_child";
-      await sendButtonMessage(from, "Who would you like to pay for?", [
-        { title: "Child 1" },
-        { title: "Child 2" },
-        { title: "Child 3" },
-      ]);
-      break;
-
-    case "select_child":
-      session.child = text;
-      session.step = "select_amount";
-      await sendButtonMessage(from, "How much would you like to pay?", [
-        { title: "5000" },
-        { title: "10000" },
-        { title: "15000" },
-        { title: "20000" },
-        { title: "25000" },
-        { title: "30000" },
-        { title: "35000" },
-        { title: "40000" },
-        { title: "45000" },
-        { title: "50000" },
-      ]);
-      break;
-
-    case "select_amount":
-      session.amount = parseInt(text);
-      session.total = session.amount + 100; // service charge
-      session.step = "payment_info";
-
-      await sendTextMessage(
-        from,
-        `You selected ${session.child} and amount ${session.amount} Naira.\n` +
-          `Please pay into this virtual account: 1234567890.\n` +
-          `This account will expire soon. 100 Naira service charge is added, total: ${session.total} Naira.\n` +
-          `Press the button below to copy the account number.`
-      );
-
-      await sendButtonMessage(from, "Copy account number", [{ title: "Copy Account" }]);
-      break;
-
-    case "payment_info":
-      if (text.toLowerCase().includes("paid")) {
-        session.step = "done";
-        await sendTextMessage(
-          from,
-          `Thank you, we have received your payment of ${session.total} Naira for ${session.child}. ` +
-            `Your school has been notified and will issue a receipt shortly.`
-        );
-      } else {
-        await sendTextMessage(
-          from,
-          `Please type "paid" once you have completed the payment.`
-        );
+// Helper: Send text message
+async function sendText(to, text) {
+  await axios.post(
+    `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: "whatsapp",
+      to,
+      type: "text",
+      text: { body: text }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json"
       }
-      break;
-
-    case "done":
-      await sendTextMessage(from, `You have already completed the payment. Thank you!`);
-      break;
-  }
+    }
+  );
 }
 
-// === SEND SIMPLE TEXT MESSAGE ===
-async function sendTextMessage(to, body) {
-  try {
-    await axios.post(
-      `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
-      {
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: { body },
-      },
-      { headers: { Authorization: `Bearer ${TOKEN}` } }
-    );
-  } catch (err) {
-    console.error(err.response?.data || err.message);
-  }
+// Helper: Send interactive buttons
+async function sendInteractiveButtons(to, bodyText, buttons) {
+  await axios.post(
+    `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: bodyText },
+        action: { buttons: buttons.map(b => ({ type: "reply", reply: { id: b.id, title: b.title } })) }
+      }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
 }
 
-// === SEND BUTTON MESSAGE ===
-async function sendButtonMessage(to, body, buttons) {
-  try {
-    await axios.post(
-      `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
-      {
-        messaging_product: "whatsapp",
-        to,
-        type: "interactive",
-        interactive: {
-          type: "button",
-          body: { text: body },
-          action: {
-            buttons: buttons.map((b, i) => ({
-              type: "reply",
-              reply: { id: `btn_${i}`, title: b.title },
-            })),
-          },
-        },
-      },
-      { headers: { Authorization: `Bearer ${TOKEN}` } }
-    );
-  } catch (err) {
-    console.error(err.response?.data || err.message);
-  }
-}
-
-// === START SERVER ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
