@@ -1,47 +1,20 @@
 const express = require("express");
-const axios = require("axios");
 const bodyParser = require("body-parser");
+const axios = require("axios");
 
 const app = express();
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
-
+// === CONFIG ===
 const TOKEN = "EAAJ6yySAPogBPSZCefCjIZBUxEkvge72n6M9lfyjLfqyYZC68xmQsq1D7Kh8vpOjEnZCKABXyQOtLzgrsP26I6pZARwd16EEijYu9yTnRMN1cd0ZAdG6ZCBz1k8yEYVyt7yNIXsZBZA4dzSzZASCDlr7PZBASUqEov89QZBGq0A4eZANZAKZC2bbQJkIZCRvN04lSV0pAeUJKo9agcfFQwBQRs46KvYOMyl4MWCZAgT4UIdHhmGpQFcn9pZAoZD";
-
 const PHONE_NUMBER_ID = "816500804874123";
+const VERIFY_TOKEN = "my_secret_token";
 
-// In-memory session storage
+// === In-memory session store (simple) ===
 const sessions = {};
 
-function sendText(to, message) {
-  return axios.post(`https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`, {
-    messaging_product: "whatsapp",
-    to,
-    type: "text",
-    text: { body: message }
-  }, {
-    headers: { Authorization: `Bearer ${TOKEN}` }
-  });
-}
-
-function sendInteractiveButtons(to, text, buttons) {
-  return axios.post(`https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`, {
-    messaging_product: "whatsapp",
-    to,
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: { text },
-      action: { buttons: buttons.map((b, i) => ({ type: "reply", reply: { id: `btn_${i}`, title: b } })) }
-    }
-  }, {
-    headers: { Authorization: `Bearer ${TOKEN}` }
-  });
-}
-
+// === VERIFY WEBHOOK ===
 app.get("/webhook", (req, res) => {
-  const VERIFY_TOKEN = "my_secret_token";
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
@@ -56,61 +29,149 @@ app.get("/webhook", (req, res) => {
   }
 });
 
+// === HANDLE INCOMING MESSAGES ===
 app.post("/webhook", async (req, res) => {
-  try {
-    const entry = req.body.entry;
-    if (!entry) return res.sendStatus(200);
+  const data = req.body;
 
-    for (const e of entry) {
-      const changes = e.changes;
-      if (!changes) continue;
-
-      for (const change of changes) {
+  if (data.entry) {
+    for (const entry of data.entry) {
+      for (const change of entry.changes) {
         const value = change.value;
-        const messages = value.messages;
-        if (!messages) continue;
-
-        for (const message of messages) {
-          const from = message.from;
-          const text = message.text?.body?.toLowerCase();
-
-          if (!sessions[from]) sessions[from] = { step: 0 };
-
-          if (sessions[from].step === 0) {
-            // Step 0: Ask for child
-            sessions[from].step = 1;
-            await sendInteractiveButtons(from, "Who would you like to pay for?", ["Dapo Ayeloju", "Mariam Ayeloju", "Ramota Ayeloju"]);
-          } else if (sessions[from].step === 1) {
-            sessions[from].child = text;
-            sessions[from].step = 2;
-            // Step 1: Ask for amount
-            await sendInteractiveButtons(from, "How much would you like to pay?", ["5000", "10000", "15000", "20000", "25000", "30000", "35000", "40000", "45000", "50000"]);
-          } else if (sessions[from].step === 2) {
-            const amount = parseInt(text.replace(/\D/g, ""), 10);
-            if (!amount) {
-              await sendText(from, "Please choose a valid amount from the buttons.");
-            } else {
-              const total = amount + 100;
-              sessions[from].amount = total;
-              sessions[from].step = 3;
-              await sendText(from, `Please pay ₦${total} into this virtual account: 1234567890. Note: This account will expire in 1 hour. Service charge ₦100 included.`);
-              await sendInteractiveButtons(from, "Copy account number", ["Copied"]);
-            }
-          } else if (sessions[from].step === 3) {
-            if (text.includes("paid")) {
-              sessions[from].step = 4;
-              await sendText(from, `Thank you! We have received your payment for ${sessions[from].child}. Your school has been notified and will issue a receipt.`);
-              sessions[from] = { step: 0 }; // Reset session
-            }
+        if (value.messages) {
+          for (const message of value.messages) {
+            const from = message.from; // sender phone number
+            await handleMessage(from, message);
           }
         }
       }
     }
-    res.sendStatus(200);
-  } catch (err) {
-    console.error(err);
-    res.sendStatus(500);
   }
+
+  res.sendStatus(200);
 });
 
+// === HANDLE USER MESSAGES / INTERACTIONS ===
+async function handleMessage(from, message) {
+  // Init session
+  if (!sessions[from]) {
+    sessions[from] = { step: "start" };
+  }
+
+  const session = sessions[from];
+  let text = message.text?.body;
+  let buttonReply = message.button?.text;
+  if (buttonReply) text = buttonReply;
+
+  switch (session.step) {
+    case "start":
+      session.step = "select_child";
+      await sendButtonMessage(from, "Who would you like to pay for?", [
+        { title: "Child 1" },
+        { title: "Child 2" },
+        { title: "Child 3" },
+      ]);
+      break;
+
+    case "select_child":
+      session.child = text;
+      session.step = "select_amount";
+      await sendButtonMessage(from, "How much would you like to pay?", [
+        { title: "5000" },
+        { title: "10000" },
+        { title: "15000" },
+        { title: "20000" },
+        { title: "25000" },
+        { title: "30000" },
+        { title: "35000" },
+        { title: "40000" },
+        { title: "45000" },
+        { title: "50000" },
+      ]);
+      break;
+
+    case "select_amount":
+      session.amount = parseInt(text);
+      session.total = session.amount + 100; // service charge
+      session.step = "payment_info";
+
+      await sendTextMessage(
+        from,
+        `You selected ${session.child} and amount ${session.amount} Naira.\n` +
+          `Please pay into this virtual account: 1234567890.\n` +
+          `This account will expire soon. 100 Naira service charge is added, total: ${session.total} Naira.\n` +
+          `Press the button below to copy the account number.`
+      );
+
+      await sendButtonMessage(from, "Copy account number", [{ title: "Copy Account" }]);
+      break;
+
+    case "payment_info":
+      if (text.toLowerCase().includes("paid")) {
+        session.step = "done";
+        await sendTextMessage(
+          from,
+          `Thank you, we have received your payment of ${session.total} Naira for ${session.child}. ` +
+            `Your school has been notified and will issue a receipt shortly.`
+        );
+      } else {
+        await sendTextMessage(
+          from,
+          `Please type "paid" once you have completed the payment.`
+        );
+      }
+      break;
+
+    case "done":
+      await sendTextMessage(from, `You have already completed the payment. Thank you!`);
+      break;
+  }
+}
+
+// === SEND SIMPLE TEXT MESSAGE ===
+async function sendTextMessage(to, body) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        text: { body },
+      },
+      { headers: { Authorization: `Bearer ${TOKEN}` } }
+    );
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+  }
+}
+
+// === SEND BUTTON MESSAGE ===
+async function sendButtonMessage(to, body, buttons) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: body },
+          action: {
+            buttons: buttons.map((b, i) => ({
+              type: "reply",
+              reply: { id: `btn_${i}`, title: b.title },
+            })),
+          },
+        },
+      },
+      { headers: { Authorization: `Bearer ${TOKEN}` } }
+    );
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+  }
+}
+
+// === START SERVER ===
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
