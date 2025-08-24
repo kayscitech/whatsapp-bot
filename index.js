@@ -7,7 +7,7 @@ const app = express();
 app.use(bodyParser.json());
 
 const VERIFY_TOKEN = "my_secret_token"; // Must match your WhatsApp webhook verify token
-const WHATSAPP_TOKEN = "EAAJ6yySAPogBPSZCefCjIZBUxEkvge72n6M9lfyjLfqyYZC68xmQsq1D7Kh8vpOjEnZCKABXyQOtLzgrsP26I6pZARwd16EEijYu9yTnRMN1cd0ZAdG6ZCBz1k8yEYVyt7yNIXsZBZA4dzSzZASCDlr7PZBASUqEov89QZBGq0A4eZANZAKZC2bbQJkIZCRvN04lSV0pAeUJKo9agcfFQwBQRs46KvYOMyl4MWCZAgT4UIdHhmGpQFcn9pZAoZD";
+const WHATSAPP_TOKEN = "EAAJ6yySAPogBPfxDEUrZBBByiTSfitLXSqyAOgsmDEK8UDkmfwi0iQ59rhSDY2QSTZCGzkvmdZBZCF3AiZCQ0CnjGUCUEIP18QQfUGaBCAEGFwfaTqgfnYDovyovds6w7XcP8pSwbBuqe5RBOUrN8mIsAMyd5wdj72nIfQ5vUgwWrxg3FQ7y6k5EIJORHIXFqeZAeRLz9RzygwD6ul3hTNBhOZBQkLTYvtQj3ZA5ZAOfPZB87WXgZDZD";
 const PHONE_NUMBER_ID = "816500804874123";
 
 const sessions = {}; // Store user sessions in memory
@@ -153,3 +153,4 @@ async function sendInteractiveButtons(to, bodyText, buttons) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
