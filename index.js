@@ -45,12 +45,15 @@ app.post("/webhook", async (req, res) => {
   const from = message.from; // WhatsApp user number
 
   let userInput = null;
+  let buttonId = null;
+
   if (message.type === "text") {
     userInput = message.text.body;
   } else if (message.type === "interactive" && message.interactive.button_reply) {
     userInput = message.interactive.button_reply.title;
+    buttonId = message.interactive.button_reply.id;
   } else {
-    // If it's a different message type (like a status update), just acknowledge it.
+    // If it's a different message type, just acknowledge it.
     return res.sendStatus(200);
   }
 
@@ -61,7 +64,81 @@ app.post("/webhook", async (req, res) => {
 
   const session = sessions[from];
 
-  // Logic to handle "Click Here to Pay" or the initial message
+  // Step 4: Check for the "I have paid" button click FIRST
+  if (buttonId === "paid_button") {
+    await sendText(
+      from,
+      "Thank you! We have received your payment. Your school has been notified and will issue a receipt for you."
+    );
+    delete sessions[from]; // Reset session
+    return res.sendStatus(200);
+  }
+
+  // Step 3 (Continued): Handle custom amount input
+  if (session.awaitingCustomAmount) {
+    const customAmount = parseInt(userInput.replace(/₦|,/g, ""));
+    if (!isNaN(customAmount) && customAmount > 0) {
+      session.amount = customAmount;
+      session.awaitingCustomAmount = false;
+      // Continue to the next step to send invoice details
+    } else {
+      await sendText(from, "That doesn't look like a valid amount. Please type a number in Naira.");
+      return res.sendStatus(200);
+    }
+  }
+
+  // Step 3: Amount selected (from button or custom input)
+  if (session.child && !session.amount) {
+    if (buttonId === "custom_amount") {
+      session.awaitingCustomAmount = true;
+      await sendText(from, "Please type the amount you would like to pay in Naira.");
+    } else {
+      const parsedAmount = parseInt(userInput.replace(/₦|,/g, ""));
+      if (!isNaN(parsedAmount) && parsedAmount > 0) {
+        session.amount = parsedAmount;
+      } else {
+        await sendText(from, "That doesn't look like a valid amount. Please select an option or type a number.");
+      }
+    }
+    return res.sendStatus(200);
+  }
+
+  // Step 2: Child selected
+  if (userInput === "Tosin Akinpelu" || userInput === "Dapo Akinpelu") {
+    session.child = userInput;
+    await sendInteractiveButtons(
+      from,
+      `How much would you like to pay for ${session.child}?`,
+      [
+        { id: "5000", title: "₦5,000" },
+        { id: "10000", title: "₦10,000" },
+        { id: "custom_amount", title: "Type custom amount" }
+      ]
+    );
+    return res.sendStatus(200);
+  }
+
+  // Final step before payment: Send invoice details and the 'I have paid' button
+  // This block only runs after an amount is successfully set and we are not awaiting a custom amount.
+  if (session.amount && !session.awaitingCustomAmount && !session.awaitingPaidConfirmation) {
+    const totalAmount = session.amount + 100;
+    const formattedTotalAmount = formatNumber(totalAmount);
+
+    await sendText(
+      from,
+      `Your invoice details for ${session.child}:\n\nAmount: ₦${formattedTotalAmount}\nAccount Number: 1234567890\nService Charge: ₦100`
+    );
+
+    await sendInteractiveButtons(
+      from,
+      "Please click the button below after you have completed the payment.",
+      [{ id: "paid_button", title: "I have paid" }]
+    );
+    session.awaitingPaidConfirmation = true; // Set flag to prevent re-sending
+    return res.sendStatus(200);
+  }
+
+  // Step 1: Initial message or a fallback
   if (userInput === "Click Here to Pay" || !session.start) {
     session.start = true;
     await sendInteractiveButtons(
@@ -72,84 +149,6 @@ app.post("/webhook", async (req, res) => {
         { id: "child_2", title: "Dapo Akinpelu" }
       ]
     );
-    return res.sendStatus(200);
-  }
-
-  // Step 2: Select child
-  if (!session.child) {
-    if (userInput === "Tosin Akinpelu" || userInput === "Dapo Akinpelu") {
-      session.child = userInput;
-      await sendInteractiveButtons(
-        from,
-        `How much would you like to pay for ${session.child}?`,
-        [
-          { id: "5000", title: "₦5,000" },
-          { id: "10000", title: "₦10,000" },
-          { id: "custom_amount", title: "Type custom amount" }
-        ]
-      );
-    }
-    // If input is not a child's name and a child hasn't been selected, do nothing
-    return res.sendStatus(200);
-  }
-
-  // Step 3: Amount selected or a custom amount is being entered
-  if (session.child && !session.amount) {
-    if (userInput === "Type custom amount") {
-      session.awaitingCustomAmount = true;
-      await sendText(from, "Please type the amount you would like to pay in Naira.");
-      return res.sendStatus(200);
-    } else {
-      const parsedAmount = parseInt(userInput.replace(/₦|,/g, ""));
-      if (!isNaN(parsedAmount) && parsedAmount > 0) {
-        session.amount = parsedAmount;
-        session.awaitingCustomAmount = false;
-      } else {
-        await sendText(from, "That doesn't look like a valid amount. Please type a number in Naira.");
-        return res.sendStatus(200);
-      }
-    }
-  }
-
-  // Handle custom amount input
-  if (session.awaitingCustomAmount && userInput) {
-    const customAmount = parseInt(userInput.replace(/₦|,/g, ""));
-    if (!isNaN(customAmount) && customAmount > 0) {
-      session.amount = customAmount;
-      session.awaitingCustomAmount = false;
-    } else {
-      await sendText(from, "That doesn't look like a valid amount. Please type a number in Naira.");
-      return res.sendStatus(200);
-    }
-  }
-
-  // Once amount is set (either by button or custom input)
-  if (session.amount) {
-    const totalAmount = session.amount + 100;
-    const formattedTotalAmount = formatNumber(totalAmount);
-
-    await sendText(
-      from,
-      `Your invoice details for ${session.child}:\n\nAmount: ₦${formattedTotalAmount}\nAccount Number: 1234567890\nService Charge: ₦100`
-    );
-
-    // Prompt user to confirm payment with a button
-    await sendInteractiveButtons(
-      from,
-      "Please click the button below after you have completed the payment.",
-      [{ id: "paid_button", title: "I have paid" }]
-    );
-    session.awaitingPaidConfirmation = true; // Set a flag to wait for the button click
-    return res.sendStatus(200);
-  }
-
-  // Step 4: Confirm payment via button click
-  if (userInput && userInput === "I have paid") {
-    await sendText(
-      from,
-      "Thank you! We have received your payment. Your school has been notified and will issue a receipt for you."
-    );
-    delete sessions[from]; // Reset session
     return res.sendStatus(200);
   }
 
